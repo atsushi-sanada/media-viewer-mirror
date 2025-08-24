@@ -1,0 +1,9 @@
+Windows Registry Editor Version 5.00
+
+; フォルダを「Media Viewerで開く」
+[HKEY_CLASSES_ROOT\Directory\shell\MediaViewerOpen]
+@="Media Viewerで開く"
+"Icon"="%ProgramFiles%\\Media Viewer\\media-viewer.exe"
+
+[HKEY_CLASSES_ROOT\Directory\shell\MediaViewerOpen\command]
+@="\"%ProgramFiles%\\Media Viewer\\media-viewer.exe\" \"%1\""

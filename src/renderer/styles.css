@@ -1,0 +1,362 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: #1a1a1a;
+    color: #ffffff;
+    overflow-x: hidden;
+}
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px 20px;
+    background-color: #2d2d2d;
+    border-bottom: 1px solid #404040;
+}
+
+.header h1 {
+    font-size: 24px;
+    font-weight: 600;
+    color: #ffffff;
+}
+
+.controls {
+    display: flex;
+    gap: 10px;
+}
+
+.btn {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+}
+
+.btn-primary {
+    background-color: #007acc;
+    color: white;
+}
+
+.btn-primary:hover {
+    background-color: #005a9e;
+}
+
+.btn-secondary {
+    background-color: #404040;
+    color: white;
+}
+
+.btn-secondary:hover {
+    background-color: #505050;
+}
+
+.btn-small {
+    padding: 4px 8px;
+    font-size: 12px;
+}
+
+.history-panel {
+    background-color: #2d2d2d;
+    border-bottom: 1px solid #404040;
+    padding: 15px 20px;
+    transition: all 0.3s ease;
+}
+
+.history-panel.hidden {
+    display: none;
+}
+
+.history-section {
+    margin-bottom: 15px;
+}
+
+.history-section h3 {
+    font-size: 16px;
+    margin-bottom: 8px;
+    color: #cccccc;
+}
+
+.folder-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.folder-item {
+    background-color: #404040;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: background-color 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.folder-item:hover {
+    background-color: #505050;
+}
+
+.folder-item.pinned {
+    background-color: #007acc;
+}
+
+.folder-item .unpin-btn {
+    background: none;
+    border: none;
+    color: white;
+    cursor: pointer;
+    font-size: 12px;
+    padding: 0;
+    margin-left: 4px;
+}
+
+.current-path {
+    padding: 10px 20px;
+    background-color: #333333;
+    border-bottom: 1px solid #404040;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 14px;
+    color: #cccccc;
+}
+
+.main-content {
+    flex: 1;
+    padding: 20px;
+    overflow-y: auto;
+}
+
+.video-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 2px;
+    max-height: calc(100vh - 200px);
+    overflow-y: auto;
+}
+
+.video-item {
+    background-color: #2d2d2d;
+    border-radius: 8px;
+    overflow: hidden;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    cursor: grab;
+}
+
+.video-item:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.video-item.dragging {
+    opacity: 0.5;
+    transform: rotate(5deg);
+    cursor: grabbing;
+}
+
+.video-item video {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    object-fit: contain;
+    background-color: #000000;
+}
+/* 画像サムネイルにも同様のスタイルを適用 */
+.video-item img {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    object-fit: contain;
+    background-color: #000000;
+}
+
+.video-info {
+    padding: 12px;
+}
+
+.video-name {
+    font-size: 14px;
+    font-weight: 500;
+    margin-bottom: 4px;
+    word-break: break-word;
+}
+
+.video-size {
+    font-size: 12px;
+    color: #888888;
+}
+
+.empty-state {
+    grid-column: 1 / -1;
+    text-align: center;
+    padding: 60px 20px;
+    color: #666666;
+}
+
+.empty-icon {
+    font-size: 48px;
+    margin-bottom: 16px;
+}
+
+.drop-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 122, 204, 0.8);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+}
+
+.drop-overlay.hidden {
+    display: none;
+}
+
+.drop-message {
+    text-align: center;
+    color: white;
+}
+
+.drop-icon {
+    font-size: 64px;
+    margin-bottom: 16px;
+}
+
+.loading {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(26, 26, 26, 0.8);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    z-index: 999;
+}
+
+.loading.hidden {
+    display: none;
+}
+
+.spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid #404040;
+    border-top: 4px solid #007acc;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-bottom: 16px;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* WebP遅延ロード用プレースホルダー */
+.lazy-webp {
+    position: relative;
+    display: inline-block;
+    background-color: #444;
+}
+.lazy-webp::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 32px;
+    height: 32px;
+    margin: -16px 0 0 -16px;
+    border: 4px solid #888;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    z-index: 1000;
+}
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* スクロールバーのスタイリング */
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #1a1a1a;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #404040;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #505050;
+}
+
+/* レスポンシブデザイン */
+@media (max-width: 768px) {
+    .video-grid {
+        grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+        gap: 15px;
+    }
+    
+    .header {
+        flex-direction: column;
+        gap: 10px;
+    }
+    
+    .controls {
+        width: 100%;
+        justify-content: center;
+    }
+}
+
+/* プレビュー付きレイアウト */
+.body-wrapper {
+    display: flex;
+    height: calc(100vh - 60px); /* ヘッダー除く */
+}
+.preview-panel {
+    width: 400px;
+    background-color: #222;
+    color: #ddd;
+    padding: 10px;
+    overflow: auto;
+    resize: horizontal;
+    min-width: 200px;
+    max-width: 1000px;
+    border-right: 1px solid #444;
+}
+.content-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+.video-grid {
+    flex: 1;
+    /* 既存スタイル */
+}
+/* プレビューパネル内でクリックされたメディアを拡大表示 */
+.preview-panel img,
+.preview-panel video {
+    width: 100%;
+    max-height: calc(100vh - 100px);
+    object-fit: contain;
+}
+

@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Media Viewer - メディアビューワー</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="app">
+        <!-- ヘッダー -->
+        <header class="header">
+            <h1>Media Viewer</h1>
+            <div class="controls">
+                <button id="select-folder-btn" class="btn btn-primary">フォルダを選択</button>
+                <button id="toggle-history-btn" class="btn btn-secondary">履歴</button>
+                <select id="sort-select" class="btn btn-secondary">
+                    <option value="name">名前</option>
+                    <option value="mtime">更新時間</option>
+                    <option value="type">種類</option>
+                </select>
+                <select id="order-select" class="btn btn-secondary">
+                    <option value="asc">昇順</option>
+                    <option value="desc">降順</option>
+                </select>
+                <select id="filter-select" class="btn btn-secondary">
+                    <option value="all">すべて</option>
+                    <option value=".mp4">.mp4</option>
+                    <option value=".webm">.webm</option>
+                    <option value=".mov">.mov</option>
+                    <option value=".avi">.avi</option>
+                    <option value=".mkv">.mkv</option>
+                    <option value=".wmv">.wmv</option>
+                    <option value=".mp3">.mp3</option>
+                    <option value=".png">.png</option>
+                    <option value=".jpg">.jpg</option>
+                    <option value=".jpeg">.jpeg</option>
+                    <option value=".gif">.gif</option>
+                    <option value=".bmp">.bmp</option>
+                    <option value=".tiff">.tiff</option>
+                    <option value=".webp">.webp</option>
+                    <option value=".psd">.psd</option>
+                </select>
+                <select id="thumb-size-select" class="btn btn-secondary">
+                    <option value="small">小さい</option>
+                    <option value="standard">標準</option>
+                    <option value="large">大きい</option>
+                </select>
+            </div>
+        </header>
+
+        <!-- プレビュー付きレイアウト -->
+        <div class="body-wrapper">
+            <!-- プレビューエリア -->
+            <div id="preview-panel" class="preview-panel">
+                <p>サムネイルをクリックするとプレビューされます</p>
+            </div>
+            <!-- メインコンテンツエリア -->
+            <div class="content-area">
+        <!-- パス履歴パネル -->
+        <div id="history-panel" class="history-panel hidden">
+            <div class="history-section">
+                <h3>ピン留めフォルダ</h3>
+                <div id="pinned-folders" class="folder-list"></div>
+            </div>
+            <div class="history-section">
+                <h3>最近使用したフォルダ</h3>
+                <div id="recent-folders" class="folder-list"></div>
+            </div>
+        </div>
+
+        <!-- 現在のフォルダパス表示 -->
+        <div id="current-path" class="current-path">
+            <span>フォルダが選択されていません</span>
+            <button id="pin-current-btn" class="btn btn-small hidden">ピン留め</button>
+        </div>
+
+        <!-- 動画グリッド -->
+        <main class="main-content">
+            <div id="video-grid" class="video-grid">
+                <div class="empty-state">
+                    <div class="empty-icon">📁</div>
+                    <p>フォルダを選択して動画を表示してください</p>
+                </div>
+            </div>
+        </main>
+
+        <!-- ドラッグ&ドロップオーバーレイ -->
+        <div id="drop-overlay" class="drop-overlay hidden">
+            <div class="drop-message">
+                <div class="drop-icon">📂</div>
+                <p>コピー先フォルダを選択してください</p>
+            </div>
+        </div>
+
+        <!-- ローディング表示 -->
+        <div id="loading" class="loading hidden">
+            <div class="spinner"></div>
+            <p>動画を読み込み中...</p>
+        </div>
+        </div> <!-- /.content-area -->
+        </div> <!-- /.body-wrapper -->
+    </div> <!-- /#app -->
+
+    <script src="renderer.js"></script>
+</body>
+</html>
+

@@ -1,0 +1,49 @@
+{
+  "name": "media-viewer",
+  "version": "1.0.0",
+  "description": "メディアビューワー - 動画・画像のループ再生一覧表示",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "build": "electron-builder",
+    "pack-win": "electron-builder --win --dir --config.win.sign=false",
+    "install-deps": "npm install"
+  },
+  "keywords": [
+    "video",
+    "viewer",
+    "electron",
+    "loop",
+    "playlist"
+  ],
+  "author": "Manus AI",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^27.0.0",
+    "electron-builder": "^24.6.4"
+  },
+  "dependencies": {
+    "psd": "^3.4.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "build": {
+    "appId": "com.manus.video-viewer",
+    "productName": "Media Viewer",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "public/**/*",
+      "node_modules/**/*"
+    ],
+    "win": {
+      "target": ["portable"],
+      "icon": "public/icon.ico",
+      "sign": false,
+      "cscLink": ""
+    }
+  }
+}
