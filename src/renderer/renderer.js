@@ -62,17 +62,42 @@ class VideoViewer {
         this.loadPathHistory();
         // プログラムから開くで渡されたファイルをプレビュー
         ipcRenderer.on('open-file', async (_, filePath) => {
-            const folder = require('path').dirname(filePath);
-            // フォルダ読み込み
-            await this.loadFolder(folder);
-            // プレビューパネルに直接ファイルを表示
-            // find index
-            const media = this.videoFiles.find(m => m.path === filePath);
-            if (media) {
-                // クローン再利用
-                const item = this.createMediaItem(media, this.videoFiles.indexOf(media));
-                item.click();
+            const pathModule = require('path');
+            const ext = pathModule.extname(filePath).toLowerCase();
+            const videoExts = ['.mp4','.webm','.mov','.avi','.mkv','.wmv','.mp3'];
+            const imageExts = ['.png','.jpg','.jpeg','.gif','.bmp','.tiff','.webp'];
+            // PSD はサポート外
+            if (ext === '.psd') {
+                alert('PSDプレビューはサポートされていません');
+                return;
             }
+            // 直接ファイル起動：フォルダパスを保持して後で復元
+            this._openFileFolder = pathModule.dirname(filePath);
+            // 動画または画像を単一ビューで直接表示
+            let mediaType;
+            if (videoExts.includes(ext)) mediaType = 'video';
+            else if (imageExts.includes(ext)) mediaType = 'image';
+            else {
+                alert('非対応ファイル形式です: ' + ext);
+                return;
+            }
+            // メディアオブジェクト生成
+            const media = { path: filePath, name: pathModule.basename(filePath), type: mediaType };
+            // メディア要素動的生成
+            let elem;
+            if (mediaType === 'video') {
+                elem = document.createElement('video');
+                elem.src = `file://${filePath}`;
+                elem.controls = true;
+                elem.autoplay = true;
+                elem.loop = true;
+                elem.muted = true;
+            } else {
+                elem = document.createElement('img');
+                elem.src = `file://${filePath}`;
+            }
+            // 直接単一ビュー起動
+            this.enterSingleView(media, elem);
         });
         this.videoGrid = document.getElementById('video-grid');
         // WebP画像の遅延ロード＆アンロード用IntersectionObserver
@@ -94,6 +119,39 @@ class VideoViewer {
                 }
             });
         }, { root: this.videoGrid, rootMargin: '0px', threshold: 0 });
+        // 非WebPメディアの先読み・破棄用IntersectionObserver
+        this.mediaObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                const item = entry.target;
+                const idx = parseInt(item.dataset.mediaIndex);
+                const media = this.videoFiles[idx];
+                const vid = entry.target.querySelector('video');
+                if (media.type === 'video' && vid) {
+                    if (entry.isIntersecting) {
+                        // 画面内に入ったら再生
+                        vid.play().catch(() => {});
+                    } else {
+                        // 画面外に出たら一時停止
+                        vid.pause();
+                    }
+                }
+            });
+        }, { root: this.videoGrid, rootMargin: '200px', threshold: 0.1 });
+        this.header = document.querySelector('.header');
+        this.bodyWrapper = document.querySelector('.body-wrapper');
+        this.isSingleView = false;
+        this.lastIndex = null;
+        // グローバルEnterキーでリストビューからシングルビューに切り替え
+        document.addEventListener('keydown', (e) => {
+            if (!this.isSingleView && e.key === 'Enter' && this.lastIndex !== null) {
+                e.preventDefault();
+                this.toggleSingleView(this.lastIndex);
+            }
+        });
+        // アプリ起動時のリストビュー用デフォルトWindowサイズを取得
+        ipcRenderer.invoke('get-content-size').then(([w, h]) => {
+            this._defaultContentSize = { width: w, height: h };
+        });
     }
 
     initializeElements() {
@@ -103,7 +161,7 @@ class VideoViewer {
         this.currentPathElement = document.getElementById('current-path');
         this.pinCurrentBtn = document.getElementById('pin-current-btn');
         this.videoGrid = document.getElementById('video-grid');
-        this.dropOverlay = document.getElementById('drop-overlay');
+        this.dropOverlay = document.getElementById('drop-overlay'); // may be null if overlay removed
         this.loading = document.getElementById('loading');
         this.pinnedFolders = document.getElementById('pinned-folders');
         this.recentFolders = document.getElementById('recent-folders');
@@ -113,11 +171,15 @@ class VideoViewer {
         this.selectFolderBtn.addEventListener('click', () => this.selectFolder());
         this.toggleHistoryBtn.addEventListener('click', () => this.toggleHistory());
         this.pinCurrentBtn.addEventListener('click', () => this.pinCurrentFolder());
-        
-        // ドラッグ&ドロップイベント
+        // ドラッグオーバー/ドロップは document レベルで処理
         document.addEventListener('dragover', (e) => this.handleDragOver(e));
-        document.addEventListener('drop', (e) => this.handleDrop(e));
         document.addEventListener('dragleave', (e) => this.handleDragLeave(e));
+        document.addEventListener('drop', (e) => this.handleDrop(e));
+        // dropOverlay クリックで非表示、存在する場合のみバインド
+        if (this.dropOverlay) {
+            this.dropOverlay.addEventListener('click', () => this.dropOverlay.classList.add('hidden'));
+            this.dropOverlay.addEventListener('drop', (e) => this.handleDrop(e));
+        }
     }
 
     async loadPathHistory() {
@@ -306,6 +368,10 @@ class VideoViewer {
         const item = document.createElement('div');
         item.className = 'video-item';
         item.draggable = true;
+        // 単一ビューの切替用にフォーカス可能にする
+        item.tabIndex = 0;
+        // 最後に選択したインデックスを記録
+        item.addEventListener('focus', () => { this.lastIndex = index; });
         item.dataset.mediaIndex = index;
         item.dataset.mediaPath = media.path;
 
@@ -325,15 +391,10 @@ class VideoViewer {
             });
         } else {
             if (ext === '.psd') {
-                // PSDプレビュー対応
+                // PSDプレビューは重い/不安定なため汎用アイコンを表示
                 mediaElement = document.createElement('img');
                 mediaElement.alt = media.name;
-                const PSD = require('psd');
-                PSD.open(media.path).then(psdObj => {
-                    const pngObj = psdObj.image.toPng();
-                    const buffer = require('pngjs').PNG.sync.write(pngObj);
-                    mediaElement.src = 'data:image/png;base64,' + buffer.toString('base64');
-                }).catch(err => console.error('PSDプレビューエラー:', err));
+                mediaElement.src = 'public/icon.png';
             } else if (ext === '.webp') {
                 // WebPは背景プレースホルダー＋IntersectionObserverで遅延ロード
                 // コンテナ(item)にdata属性とクラスを設定
@@ -362,62 +423,26 @@ class VideoViewer {
         item.style.width = `${dim}px`;
         item.style.height = `${dim}px`;
         // WebP以外の場合のみメディア要素を追加
-        if (mediaElement) item.appendChild(mediaElement);
-        // クリックでプレビュー表示
-        item.addEventListener('click', () => {
-            const preview = document.getElementById('preview-panel');
-            preview.innerHTML = '';
-            // メタデータ表示
-            const meta = document.createElement('div');
-            meta.className = 'preview-meta';
-            meta.innerHTML = `
-                <p><strong>ファイル名:</strong> ${media.name}</p>
-                <p><strong>サイズ:</strong> ${this.formatFileSize(media.size)}</p>
-                <p><strong>更新日時:</strong> ${new Date(media.mtimeMs).toLocaleString()}</p>
-                <p><strong>タイプ:</strong> ${media.type}</p>
-            `;
-            // プレビュー要素複製
-            const clone = mediaElement.cloneNode(true);
-            // プレビューではサムネイルサイズ指定をクリア
-            clone.style.width = '';
-            clone.style.height = '';
-            if (media.type === 'video') {
-                clone.controls = true;
-                clone.autoplay = true;
-                clone.loop = true;
-                // 自動再生
-                setTimeout(() => clone.play().catch(err => console.warn('プレビュー再生エラー:', err)), 0);
-                // 動画メタ情報追加
-                clone.addEventListener('loadedmetadata', () => {
-                    const w = clone.videoWidth;
-                    const h = clone.videoHeight;
-                    const d = clone.duration.toFixed(1);
-                    const extra = document.createElement('p');
-                    extra.innerHTML = `<strong>解像度:</strong> ${w}×${h} <strong>長さ:</strong> ${d}秒`;
-                    meta.appendChild(extra);
-                });
-            } else {
-                // 画像メタ情報追加
-                clone.addEventListener('load', () => {
-                    const w = clone.naturalWidth;
-                    const h = clone.naturalHeight;
-                    const extra = document.createElement('p');
-                    extra.innerHTML = `<strong>解像度:</strong> ${w}×${h}`;
-                    meta.appendChild(extra);
-                });
-            }
-            // 先にプレビュー要素を追加し、その後にメタデータを表示
-            preview.appendChild(clone);
-            preview.appendChild(meta);
-        });
+        // WebPは既存webpObserverで遅延ロード; 他はmediaObserverで遅延ロード
+        if (mediaElement) {
+            // すべてのメディア要素を常に追加し表示する
+            item.appendChild(mediaElement);
+            mediaElement.addEventListener('dblclick', (e) => { e.preventDefault(); e.stopPropagation(); this.toggleSingleView(index); });
+            mediaElement.tabIndex = 0;
+            mediaElement.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); this.toggleSingleView(index); } });
+        }
+        // アイテムでのダブルクリックとEnterキーで単一ビュー切替
+        item.addEventListener('dblclick', () => this.toggleSingleView(index));
+        item.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); this.toggleSingleView(index); } });
+        // 先読み・破棄Observerに登録
+        this.mediaObserver.observe(item);
         // ドラッグイベント
         item.addEventListener('dragstart', (e) => {
-            e.dataTransfer.setData('text/plain', media.path);
-            e.dataTransfer.effectAllowed = 'copy';
-            e.target.classList.add('dragging');
+            this.handleVideoItemDragStart(e, media);
         });
         item.addEventListener('dragend', (e) => this.handleVideoItemDragEnd(e));
-
+        // クリックでプレビュー表示
+        item.addEventListener('click', () => this.showPreview(media));
         return item;
     }
     /**
@@ -484,34 +509,39 @@ class VideoViewer {
         this.updateHistoryDisplay();
     }
 
+    /**
+     * ネイティブドラッグ開始をメインプロセスに通知
+     */
     handleVideoItemDragStart(e, video) {
-        e.dataTransfer.setData('text/plain', video.path);
-        e.dataTransfer.effectAllowed = 'copy';
+        // メインプロセスで startDrag を実行
+        ipcRenderer.send('ondragstart', video.path);
+        e.preventDefault();
         e.target.classList.add('dragging');
     }
 
     handleVideoItemDragEnd(e) {
         e.target.classList.remove('dragging');
-        this.dropOverlay.classList.add('hidden');
+        // ドロップ完了時オーバーレイ非表示 (存在する場合のみ)
+        if (this.dropOverlay) this.dropOverlay.classList.add('hidden');
     }
 
     handleDragOver(e) {
         e.preventDefault();
         e.dataTransfer.dropEffect = 'copy';
-        this.dropOverlay.classList.remove('hidden');
+        if (this.dropOverlay) this.dropOverlay.classList.remove('hidden');
     }
 
     handleDragLeave(e) {
         // ウィンドウ外に出た場合のみオーバーレイを隠す
         if (e.clientX <= 0 || e.clientY <= 0 || 
             e.clientX >= window.innerWidth || e.clientY >= window.innerHeight) {
-            this.dropOverlay.classList.add('hidden');
+            if (this.dropOverlay) this.dropOverlay.classList.add('hidden');
         }
     }
 
     async handleDrop(e) {
         e.preventDefault();
-        this.dropOverlay.classList.add('hidden');
+        if (this.dropOverlay) this.dropOverlay.classList.add('hidden');
         
         const sourcePath = e.dataTransfer.getData('text/plain');
         if (!sourcePath) return;
@@ -569,6 +599,172 @@ class VideoViewer {
         const dim = sizeMap[this.currentThumbSize] || sizeMap.standard;
         // カラム幅を固定ピクセルに設定
         this.videoGrid.style.gridTemplateColumns = `repeat(auto-fill, ${dim}px)`;
+    }
+
+    /**
+     * 単一ビューのトグル切替
+     */
+    toggleSingleView(index) {
+        const media = this.videoFiles[index];
+        console.log('toggleSingleView called for', media.path, 'index', index);
+        // 常に最新の要素を取得
+        const item = this.videoGrid.querySelector(`.video-item[data-media-index="${index}"]`);
+        const el = item ? item.querySelector('video, img') : null;
+        if (!el) {
+            console.warn('toggleSingleView: media element not found for', media.path);
+            return;
+        }
+        if (!this.isSingleView) {
+            this.enterSingleView(media, el);
+        } else {
+            this.exitSingleView();
+        }
+    }
+    /**
+     * プレビュー領域にメディアを表示
+     */
+    showPreview(media) {
+        if (!this.previewPanel) return;
+        const preview = this.previewPanel;
+        preview.innerHTML = '';
+        // メタデータ表示
+        const meta = document.createElement('div');
+        meta.className = 'preview-meta';
+        meta.innerHTML = `
+            <p><strong>ファイル名:</strong> ${media.name}</p>
+            <p><strong>サイズ:</strong> ${this.formatFileSize(media.size)}</p>
+            <p><strong>更新日時:</strong> ${new Date(media.mtimeMs).toLocaleString()}</p>
+            <p><strong>タイプ:</strong> ${media.type}</p>
+        `;
+        // メディア要素生成
+        let elem;
+        const ext = path.extname(media.name).toLowerCase();
+        if (media.type === 'video') {
+            elem = document.createElement('video');
+            elem.src = `file://${media.path}`;
+            elem.controls = true;
+            elem.autoplay = true;
+            elem.loop = true;
+            elem.muted = false;
+        } else {
+            elem = document.createElement('img');
+            elem.src = `file://${media.path}`;
+            elem.alt = media.name;
+        }
+        elem.style.maxWidth = '100%';
+        elem.style.maxHeight = '100%';
+        preview.appendChild(elem);
+        preview.appendChild(meta);
+    }
+    enterSingleView(media, mediaElement) {
+        this.isSingleView = true;
+        // 一覧表示を隠す(styleで非表示)
+        this.header.style.display = 'none';
+        this.bodyWrapper.style.display = 'none';
+        // 単一ビューコンテナを生成
+        this.singleViewContainer = document.createElement('div');
+        this.singleViewContainer.className = 'single-view-container';
+        // メディア要素をクローンして全画面表示
+        const clone = mediaElement.cloneNode(true);
+        // ネイティブダブルクリック全画面化抑制
+        if (clone.tagName === 'VIDEO') {
+            clone.controlsList = 'nofullscreen';
+            clone.requestFullscreen = () => {};
+            if (clone.webkitRequestFullscreen) clone.webkitRequestFullscreen = () => {};
+        }
+        // コンテンツ解像度に合わせるためスタイルは後で設定
+        if (clone.tagName === 'VIDEO') {
+            clone.controls = true;
+            clone.autoplay = true;
+            clone.loop = true;
+            setTimeout(() => clone.play().catch(() => {}), 0);
+            clone.addEventListener('loadedmetadata', () => {
+                const w = clone.videoWidth;
+                const h = clone.videoHeight;
+                // リストビュー時のコンテンツサイズを取得して保持
+                ipcRenderer.invoke('get-content-size').then(([cw, ch]) => {
+                    this._savedContentSize = { width: cw, height: ch };
+                    // メディア解像度に合わせてウィンドウリサイズ
+                    ipcRenderer.invoke('resize-window', w, h);
+                });
+            });
+        } else {
+            clone.addEventListener('load', () => {
+                const w = clone.naturalWidth;
+                const h = clone.naturalHeight;
+                // リストビュー時のコンテンツサイズを取得して保持
+                ipcRenderer.invoke('get-content-size').then(([cw, ch]) => {
+                    this._savedContentSize = { width: cw, height: ch };
+                    ipcRenderer.invoke('resize-window', w, h);
+                });
+            });
+        }
+        this.singleViewContainer.appendChild(clone);
+        document.body.appendChild(this.singleViewContainer);
+        // ウィンドウリサイズ時にコンテンツをcontainerサイズに合わせる
+        this._resizeHandler = () => {
+            if (this.singleViewContainer) {
+                const mediaEl = this.singleViewContainer.querySelector('video, img');
+                if (mediaEl) {
+                    const { width, height } = this.singleViewContainer.getBoundingClientRect();
+                    mediaEl.style.width = `${width}px`;
+                    mediaEl.style.height = `${height}px`;
+                }
+            }
+        };
+        window.addEventListener('resize', this._resizeHandler);
+        // コンテナでのダブルクリックでリストビューに戻る
+        this.singleViewContainer.addEventListener('dblclick', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            this.exitSingleView();
+        });
+        // Enterキーで一覧ビューに戻る
+        this._singleViewKeyHandler = (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                this.exitSingleView();
+            }
+        };
+        document.addEventListener('keydown', this._singleViewKeyHandler);
+    }
+    exitSingleView() {
+        this.isSingleView = false;
+        // 直接ファイル起動時は解除後に一覧ビュー表示
+        if (this._openFileFolder) {
+            this.loadFolder(this._openFileFolder);
+            this._openFileFolder = null;
+        }
+        // リストビュー時のWindowサイズを復帰
+        if (this._openedDirectView) {
+            // 直接起動時はデフォルトサイズに戻す
+            if (this._defaultContentSize) {
+                ipcRenderer.invoke('resize-window', this._defaultContentSize.width, this._defaultContentSize.height);
+            }
+            this._openedDirectView = false;
+        } else if (this._savedContentSize) {
+            // 通常の切替時は保存サイズに戻す
+            ipcRenderer.invoke('resize-window', this._savedContentSize.width, this._savedContentSize.height);
+            this._savedContentSize = null;
+        }
+        // Enterキーハンドラを解除
+        if (this._singleViewKeyHandler) {
+            document.removeEventListener('keydown', this._singleViewKeyHandler);
+            this._singleViewKeyHandler = null;
+        }
+        // 一覧表示を戻す(styleで再表示)
+        this.header.style.display = '';
+        this.bodyWrapper.style.display = '';
+        // リサイズハンドラ解除
+        if (this._resizeHandler) {
+            window.removeEventListener('resize', this._resizeHandler);
+            this._resizeHandler = null;
+        }
+        // 単一ビューコンテナを削除
+        if (this.singleViewContainer) {
+            document.body.removeChild(this.singleViewContainer);
+            this.singleViewContainer = null;
+        }
     }
 }
 

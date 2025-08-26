@@ -1,3 +1,4 @@
+/* 全体の基本リセット */
 * {
     margin: 0;
     padding: 0;
@@ -207,23 +208,6 @@ body {
     margin-bottom: 16px;
 }
 
-.drop-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: rgba(0, 122, 204, 0.8);
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    z-index: 1000;
-}
-
-.drop-overlay.hidden {
-    display: none;
-}
-
 .drop-message {
     text-align: center;
     color: white;
@@ -358,5 +342,27 @@ body {
     width: 100%;
     max-height: calc(100vh - 100px);
     object-fit: contain;
+}
+
+/* single-view container */
+.single-view-container {
+    position: absolute;
+    inset: 0;
+    background-color: #000;
+    overflow: hidden;
+    margin: 0;
+    padding: 0;
+    z-index: 1000;
+}
+
+/* シングルビュー内のメディア */
+.single-view-container video,
+.single-view-container img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
 }
 

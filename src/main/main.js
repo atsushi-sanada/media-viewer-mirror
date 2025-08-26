@@ -175,3 +175,29 @@ ipcMain.handle('load-path-history', async () => {
   }
 });
 
+ipcMain.handle('resize-window', (event, width, height) => {
+    // レンダラーからの送信元ウィンドウを取得し、コンテンツサイズを設定
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win) {
+        win.setContentSize(width, height);
+    }
+    return true;
+});
+
+ipcMain.handle('get-content-size', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win) {
+        return win.getContentSize();
+    }
+    return [0, 0];
+});
+
+// OSネイティブドラッグ開始
+ipcMain.on('ondragstart', (event, filePath) => {
+    // ファイルをドラッグアウト
+    event.sender.startDrag({
+        file: filePath,
+        icon: path.join(__dirname, '../../public/icon.png')
+    });
+});
+
