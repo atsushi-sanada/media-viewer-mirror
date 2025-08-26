@@ -366,3 +366,9 @@ body {
     display: block;
 }
 
+/* 選択状態のビデオアイテムに黄色い枠線を表示 */
+.video-item:focus {
+    outline: 3px solid #f51a5b;
+    outline-offset: -2px;
+}
+

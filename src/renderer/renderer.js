@@ -68,7 +68,15 @@ class VideoViewer {
             const imageExts = ['.png','.jpg','.jpeg','.gif','.bmp','.tiff','.webp'];
             // PSD はサポート外
             if (ext === '.psd') {
-                alert('PSDプレビューはサポートされていません');
+                // PSDプレビュー
+                const dataUrl = await ipcRenderer.invoke('psd-preview', filePath);
+                if (dataUrl) {
+                    elem = document.createElement('img');
+                    elem.src = dataUrl;
+                } else {
+                    alert('PSDプレビューに失敗しました');
+                    return;
+                }
                 return;
             }
             // 直接ファイル起動：フォルダパスを保持して後で復元
@@ -374,6 +382,30 @@ class VideoViewer {
         item.addEventListener('focus', () => { this.lastIndex = index; });
         item.dataset.mediaIndex = index;
         item.dataset.mediaPath = media.path;
+        // 矢印キーで隣接アイテムにフォーカス移動
+        item.addEventListener('keydown', (e) => {
+            const key = e.key;
+            if (!key.startsWith('Arrow')) return;
+            e.preventDefault();
+            const idx = index;
+            // グリッドの列数を算出
+            const gridWidth = this.videoGrid.clientWidth;
+            const cellWidth = item.clientWidth;
+            const cols = Math.max(Math.floor(gridWidth / cellWidth), 1);
+            let targetIdx = null;
+            if (key === 'ArrowRight') targetIdx = idx + 1;
+            else if (key === 'ArrowLeft') targetIdx = idx - 1;
+            else if (key === 'ArrowDown') targetIdx = idx + cols;
+            else if (key === 'ArrowUp') targetIdx = idx - cols;
+            if (targetIdx !== null && targetIdx >= 0 && targetIdx < this.displayedFiles.length) {
+                const nextItem = this.videoGrid.querySelector(`.video-item[data-media-index=\"${targetIdx}\"]`);
+                if (nextItem) {
+                    nextItem.focus();
+                    // フォーカス移動後にプレビューを更新
+                    this.showPreview(this.displayedFiles[targetIdx]);
+                }
+            }
+        });
 
         let mediaElement;
         const ext = path.extname(media.name).toLowerCase();
@@ -442,7 +474,10 @@ class VideoViewer {
         });
         item.addEventListener('dragend', (e) => this.handleVideoItemDragEnd(e));
         // クリックでプレビュー表示
-        item.addEventListener('click', () => this.showPreview(media));
+        item.addEventListener('click', () => {
+            item.focus();
+            this.showPreview(media);
+        });
         return item;
     }
     /**
@@ -454,6 +489,8 @@ class VideoViewer {
         if (this.currentFilter && this.currentFilter !== 'all') {
             list = list.filter(m => require('path').extname(m.name).toLowerCase() === this.currentFilter);
         }
+        // ソート・フィルター後のリストを保存
+        this.displayedFiles = list;
         // グリッド列幅を更新
         this.updateGridColumns();
         switch (this.currentSort) {
@@ -477,7 +514,7 @@ class VideoViewer {
         // グリッド表示
         this.videoGrid.innerHTML = '';
         this.videoGrid.style.display = 'grid';
-        list.forEach((media, index) => {
+        this.displayedFiles.forEach((media, index) => {
             const mediaItem = this.createMediaItem(media, index);
             this.videoGrid.appendChild(mediaItem);
         });

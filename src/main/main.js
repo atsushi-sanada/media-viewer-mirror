@@ -201,3 +201,19 @@ ipcMain.on('ondragstart', (event, filePath) => {
     });
 });
 
+// PSDプレビュー用ハンドラを追加
+ipcMain.handle('psd-preview', async (event, filePath) => {
+    try {
+        const PSD = require('psd');
+        const { PNG } = require('pngjs');
+        const psd = PSD.fromFile(filePath);
+        psd.parse();
+        const pngImage = psd.image.toPng();
+        const buffer = PNG.sync.write(pngImage);
+        return 'data:image/png;base64,' + buffer.toString('base64');
+    } catch (error) {
+        console.error('PSDプレビューエラー:', error);
+        return null;
+    }
+});
+
