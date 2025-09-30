@@ -1,811 +1,533 @@
-const { ipcRenderer } = require('electron');
-const path = require('path');
-
-class VideoViewer {
+class MahjongGame {
     constructor() {
-        this.currentSort = 'mtime';
-        this.currentOrder = 'desc';
-        // プレビュー幅の初期値
-        this.currentPreviewWidth = 400;
-        // フィルターの初期値
-        this.currentFilter = 'all';
-        // サムネイルサイズの初期値
-        this.currentThumbSize = 'standard';
-        this.currentPath = null;
-        this.pathHistory = { recent: [], pinned: [] };
-        this.videoFiles = [];
-        
-        this.initializeElements();
+        this.playerIndex = 0;
+        this.players = [
+            { name: 'あなた', wind: '東' },
+            { name: '夕凪AI', wind: '南' },
+            { name: '黎明AI', wind: '西' },
+            { name: '宵星AI', wind: '北' }
+        ];
+        this.numberKanji = ['', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
+        this.fullWidthNumbers = ['０', '１', '２', '３', '４', '５', '６', '７', '８', '９'];
+        this.honorNames = {
+            1: '東',
+            2: '南',
+            3: '西',
+            4: '北',
+            5: '白',
+            6: '發',
+            7: '中'
+        };
+        this.resetPersistentState();
+        this.cacheElements();
         this.bindEvents();
-        // ソート選択イベント
-        this.sortSelect = document.getElementById('sort-select');
-        this.sortSelect.value = this.currentSort;
-        this.sortSelect.addEventListener('change', () => {
-            this.currentSort = this.sortSelect.value;
-            if (this.videoFiles.length) this.applySortAndRender();
-        });
-        this.orderSelect = document.getElementById('order-select');
-        this.orderSelect.value = this.currentOrder;
-        this.orderSelect.addEventListener('change', () => {
-            this.currentOrder = this.orderSelect.value;
-            if (this.videoFiles.length) this.applySortAndRender();
-        });
-        this.filterSelect = document.getElementById('filter-select');
-        this.filterSelect.value = 'all';
-        this.filterSelect.addEventListener('change', () => {
-            this.currentFilter = this.filterSelect.value;
-            // 保存して再描画
-            this.pathHistory.folderFilters[this.currentPath] = this.currentFilter;
-            this.savePathHistory();
-            this.applySortAndRender();
-        });
-        // サムネイルサイズ選択
-        this.thumbSizeSelect = document.getElementById('thumb-size-select');
-        this.thumbSizeSelect.value = this.currentThumbSize;
-        this.thumbSizeSelect.addEventListener('change', () => {
-            this.currentThumbSize = this.thumbSizeSelect.value;
-            this.savePathHistory();
-            this.updateGridColumns();
-            this.applySortAndRender();
-        });
-        // メニューからのフォルダ開く要求をハンドル
-        ipcRenderer.on('menu-select-folder', (_, folderPath) => {
-            if (folderPath) this.loadFolder(folderPath);
-        });
-        // プレビュー領域要素取得とリサイズ保存イベント
-        this.previewPanel = document.getElementById('preview-panel');
-        this.previewPanel.style.width = `${this.currentPreviewWidth}px`;
-        this.previewPanel.addEventListener('mouseup', () => {
-            this.currentPreviewWidth = this.previewPanel.getBoundingClientRect().width;
-            this.savePathHistory();
-        });
-        this.loadPathHistory();
-        // プログラムから開くで渡されたファイルをプレビュー
-        ipcRenderer.on('open-file', async (_, filePath) => {
-            const pathModule = require('path');
-            const ext = pathModule.extname(filePath).toLowerCase();
-            const videoExts = ['.mp4','.webm','.mov','.avi','.mkv','.wmv','.mp3'];
-            const imageExts = ['.png','.jpg','.jpeg','.gif','.bmp','.tiff','.webp'];
-            // PSD はサポート外
-            if (ext === '.psd') {
-                // PSDプレビュー
-                const dataUrl = await ipcRenderer.invoke('psd-preview', filePath);
-                if (dataUrl) {
-                    elem = document.createElement('img');
-                    elem.src = dataUrl;
-                } else {
-                    alert('PSDプレビューに失敗しました');
-                    return;
-                }
-                return;
-            }
-            // 直接ファイル起動：フォルダパスを保持して後で復元
-            this._openFileFolder = pathModule.dirname(filePath);
-            // 動画または画像を単一ビューで直接表示
-            let mediaType;
-            if (videoExts.includes(ext)) mediaType = 'video';
-            else if (imageExts.includes(ext)) mediaType = 'image';
-            else {
-                alert('非対応ファイル形式です: ' + ext);
-                return;
-            }
-            // メディアオブジェクト生成
-            const media = { path: filePath, name: pathModule.basename(filePath), type: mediaType };
-            // メディア要素動的生成
-            let elem;
-            if (mediaType === 'video') {
-                elem = document.createElement('video');
-                elem.src = `file://${filePath}`;
-                elem.controls = true;
-                elem.autoplay = true;
-                elem.loop = true;
-                elem.muted = true;
-            } else {
-                elem = document.createElement('img');
-                elem.src = `file://${filePath}`;
-            }
-            // 直接単一ビュー起動
-            this.enterSingleView(media, elem);
-        });
-        this.videoGrid = document.getElementById('video-grid');
-        // WebP画像の遅延ロード＆アンロード用IntersectionObserver
-        this.webpObserver = new IntersectionObserver((entries) => {
-            entries.forEach(entry => {
-                const item = entry.target;
-                if (entry.isIntersecting) {
-                    // <img>要素を動的生成
-                    const img = document.createElement('img');
-                    img.src = item.dataset.src;
-                    img.alt = item.dataset.name || '';
-                    img.className = 'webp-img';
-                    img.addEventListener('load', () => {
-                        item.classList.remove('lazy-webp');
-                    });
-                    item.appendChild(img);
-                    // 一度ロードしたら監視解除
-                    this.webpObserver.unobserve(item);
-                }
-            });
-        }, { root: this.videoGrid, rootMargin: '0px', threshold: 0 });
-        // 非WebPメディアの先読み・破棄用IntersectionObserver
-        this.mediaObserver = new IntersectionObserver((entries) => {
-            entries.forEach(entry => {
-                const item = entry.target;
-                const idx = parseInt(item.dataset.mediaIndex);
-                const media = this.videoFiles[idx];
-                const vid = entry.target.querySelector('video');
-                if (media.type === 'video' && vid) {
-                    if (entry.isIntersecting) {
-                        // 画面内に入ったら再生
-                        vid.play().catch(() => {});
-                    } else {
-                        // 画面外に出たら一時停止
-                        vid.pause();
-                    }
-                }
-            });
-        }, { root: this.videoGrid, rootMargin: '200px', threshold: 0.1 });
-        this.header = document.querySelector('.header');
-        this.bodyWrapper = document.querySelector('.body-wrapper');
-        this.isSingleView = false;
-        this.lastIndex = null;
-        // グローバルEnterキーでリストビューからシングルビューに切り替え
-        document.addEventListener('keydown', (e) => {
-            if (!this.isSingleView && e.key === 'Enter' && this.lastIndex !== null) {
-                e.preventDefault();
-                this.toggleSingleView(this.lastIndex);
-            }
-        });
-        // アプリ起動時のリストビュー用デフォルトWindowサイズを取得
-        ipcRenderer.invoke('get-content-size').then(([w, h]) => {
-            this._defaultContentSize = { width: w, height: h };
-        });
+        this.updateAllUI();
     }
 
-    initializeElements() {
-        this.selectFolderBtn = document.getElementById('select-folder-btn');
-        this.toggleHistoryBtn = document.getElementById('toggle-history-btn');
-        this.historyPanel = document.getElementById('history-panel');
-        this.currentPathElement = document.getElementById('current-path');
-        this.pinCurrentBtn = document.getElementById('pin-current-btn');
-        this.videoGrid = document.getElementById('video-grid');
-        this.dropOverlay = document.getElementById('drop-overlay'); // may be null if overlay removed
-        this.loading = document.getElementById('loading');
-        this.pinnedFolders = document.getElementById('pinned-folders');
-        this.recentFolders = document.getElementById('recent-folders');
+    resetPersistentState() {
+        this.wall = [];
+        this.hands = [[], [], [], []];
+        this.discards = [[], [], [], []];
+        this.scores = [25000, 25000, 25000, 25000];
+        this.roundWind = '東';
+        this.roundCount = 1;
+        this.honba = 0;
+        this.currentTurn = 0;
+        this.state = 'idle';
+        this.highlightTileId = null;
+        this.winnerIndex = null;
+        this.logEntries = [];
+    }
+
+    cacheElements() {
+        this.startBtn = document.getElementById('start-btn');
+        this.autoSortBtn = document.getElementById('auto-sort-btn');
+        this.tsumoBtn = document.getElementById('tsumo-btn');
+        this.wallCountEl = document.getElementById('wall-count');
+        this.roundInfoEl = document.getElementById('round-info');
+        this.statusMessageEl = document.getElementById('status-message');
+        this.scoreCards = Array.from(document.querySelectorAll('.score-card'));
+        this.scoreEls = this.scoreCards.map(card => card.querySelector('.points'));
+        this.seatStates = this.players.map((_, idx) => document.getElementById(`state-${idx}`));
+        this.handContainers = this.players.map((_, idx) => document.getElementById(`hand-${idx}`));
+        this.discardContainers = this.players.map((_, idx) => document.getElementById(`discard-${idx}`));
+        this.logList = document.getElementById('log-list');
     }
 
     bindEvents() {
-        this.selectFolderBtn.addEventListener('click', () => this.selectFolder());
-        this.toggleHistoryBtn.addEventListener('click', () => this.toggleHistory());
-        this.pinCurrentBtn.addEventListener('click', () => this.pinCurrentFolder());
-        // ドラッグオーバー/ドロップは document レベルで処理
-        document.addEventListener('dragover', (e) => this.handleDragOver(e));
-        document.addEventListener('dragleave', (e) => this.handleDragLeave(e));
-        document.addEventListener('drop', (e) => this.handleDrop(e));
-        // dropOverlay クリックで非表示、存在する場合のみバインド
-        if (this.dropOverlay) {
-            this.dropOverlay.addEventListener('click', () => this.dropOverlay.classList.add('hidden'));
-            this.dropOverlay.addEventListener('drop', (e) => this.handleDrop(e));
-        }
-    }
-
-    async loadPathHistory() {
-        try {
-            this.pathHistory = await ipcRenderer.invoke('load-path-history');
-            // デフォルト値の初期化
-            const ph = this.pathHistory || {};
-            ph.recent = Array.isArray(ph.recent) ? ph.recent : [];
-            ph.pinned = Array.isArray(ph.pinned) ? ph.pinned : [];
-            ph.folderFilters = ph.folderFilters || {};
-            this.pathHistory = ph;
-            // 保存されたソート設定を反映
-            if (this.pathHistory.sort) this.currentSort = this.pathHistory.sort;
-            if (this.pathHistory.order) this.currentOrder = this.pathHistory.order;
-            // ドロップダウンに適用
-            this.sortSelect.value = this.currentSort;
-            this.orderSelect.value = this.currentOrder;
-            // サムネイルサイズ復元
-            if (this.pathHistory.thumbSize) this.currentThumbSize = this.pathHistory.thumbSize;
-            this.thumbSizeSelect.value = this.currentThumbSize;
-            this.updateGridColumns();
-            // フォルダ固有フィルター初期化
-            if (!this.pathHistory.folderFilters) this.pathHistory.folderFilters = {};
-            // プレビュー幅の復元
-            if (this.pathHistory.previewWidth) this.currentPreviewWidth = this.pathHistory.previewWidth;
-            this.previewPanel.style.width = `${this.currentPreviewWidth}px`;
-            this.updateHistoryDisplay();
-        } catch (error) {
-            console.error('履歴読み込みエラー:', error);
-        }
-    }
-
-    async savePathHistory() {
-        try {
-            // 現在のソート・プレビュー設定を保存先データに含める
-            this.pathHistory.sort = this.currentSort;
-            this.pathHistory.order = this.currentOrder;
-            this.pathHistory.previewWidth = this.currentPreviewWidth;
-            // サムネイルサイズ保存
-            this.pathHistory.thumbSize = this.currentThumbSize;
-            // フォルダ固有フィルターを保存
-            if (!this.pathHistory.folderFilters) this.pathHistory.folderFilters = {};
-            if (this.currentPath) this.pathHistory.folderFilters[this.currentPath] = this.currentFilter;
-            await ipcRenderer.invoke('save-path-history', this.pathHistory);
-        } catch (error) {
-            console.error('履歴保存エラー:', error);
-        }
-    }
-
-    async selectFolder() {
-        try {
-            const folderPath = await ipcRenderer.invoke('select-folder');
-            if (folderPath) {
-                await this.loadFolder(folderPath);
-            }
-        } catch (error) {
-            console.error('フォルダ選択エラー:', error);
-            this.showError('フォルダの選択に失敗しました。');
-        }
-    }
-
-    async loadFolder(folderPath) {
-        this.showLoading(true);
-        
-        try {
-            // メディアファイルを取得
-            this.videoFiles = await ipcRenderer.invoke('get-media-files', folderPath);
-            // パスを更新
-            this.currentPath = folderPath;
-            this.updateCurrentPath();
-            // 動的にフィルタードロップダウンを再構築
-            const exts = Array.from(new Set(this.videoFiles.map(m => require('path').extname(m.name).toLowerCase()))).sort();
-            this.filterSelect.innerHTML = '<option value="all">すべて</option>';
-            exts.forEach(ext => {
-                const opt = document.createElement('option');
-                opt.value = ext;
-                opt.textContent = ext;
-                this.filterSelect.appendChild(opt);
-            });
-            // フォルダ固有フィルターを復元、存在しなければ'all'
-            const saved = this.pathHistory.folderFilters && this.pathHistory.folderFilters[folderPath];
-            this.currentFilter = (saved && exts.includes(saved)) ? saved : 'all';
-            this.filterSelect.value = this.currentFilter;
-            // 選択されたソート順で並び替え
-            this.applySortAndRender();
-            
-            // 履歴を更新
-            this.addToRecentHistory(folderPath);
-            
-            // グリッドは applySortAndRender ですでに更新済み
-            
-        } catch (error) {
-            console.error('フォルダ読み込みエラー:', error);
-            this.showError('フォルダの読み込みに失敗しました。');
-        } finally {
-            this.showLoading(false);
-        }
-    }
-
-    updateCurrentPath() {
-        if (this.currentPath) {
-            const pathSpan = this.currentPathElement.querySelector('span');
-            pathSpan.textContent = this.currentPath;
-            this.pinCurrentBtn.classList.remove('hidden');
-        }
-    }
-
-    addToRecentHistory(path) {
-        // 既存の履歴から削除
-        this.pathHistory.recent = this.pathHistory.recent.filter(p => p !== path);
-        
-        // 先頭に追加
-        this.pathHistory.recent.unshift(path);
-        
-        // 最大10件まで保持
-        if (this.pathHistory.recent.length > 10) {
-            this.pathHistory.recent = this.pathHistory.recent.slice(0, 10);
-        }
-        
-        this.savePathHistory();
-        this.updateHistoryDisplay();
-    }
-
-    updateHistoryDisplay() {
-        // ピン留めフォルダ表示
-        this.pinnedFolders.innerHTML = '';
-        this.pathHistory.pinned.forEach(path => {
-            const item = this.createFolderItem(path, true);
-            this.pinnedFolders.appendChild(item);
-        });
-
-        // 最近使用したフォルダ表示
-        this.recentFolders.innerHTML = '';
-        this.pathHistory.recent.forEach(path => {
-            if (!this.pathHistory.pinned.includes(path)) {
-                const item = this.createFolderItem(path, false);
-                this.recentFolders.appendChild(item);
+        this.startBtn.addEventListener('click', () => this.startGame());
+        this.autoSortBtn.addEventListener('click', () => this.sortAndRenderPlayerHand());
+        this.tsumoBtn.addEventListener('click', () => {
+            if (this.state === 'awaiting-discard' && this.canWin(this.hands[this.playerIndex])) {
+                this.declareWin(this.playerIndex, 'tsumo');
             }
         });
     }
 
-    createFolderItem(path, isPinned) {
-        const item = document.createElement('div');
-        item.className = `folder-item ${isPinned ? 'pinned' : ''}`;
-        
-        const pathName = path.split(/[\\/]/).pop() || path;
-        item.innerHTML = `
-            <span title="${path}">${pathName}</span>
-            ${isPinned ? '<button class="unpin-btn" title="ピン留めを解除">×</button>' : ''}
-        `;
-        
-        item.addEventListener('click', (e) => {
-            if (e.target.classList.contains('unpin-btn')) {
-                this.unpinFolder(path);
-            } else {
-                this.loadFolder(path);
-            }
-        });
-        
-        return item;
+    startGame() {
+        this.resetRoundState();
+        this.buildWall();
+        this.dealHands();
+        this.updateAllUI();
+        this.setStatusMessage('配牌が完了しました。東家のあなたから打牌です。');
+        this.addLog('東一局・0本場 開始', null);
+        this.state = 'playing';
+        this.startBtn.disabled = true;
+        this.startBtn.textContent = '再戦する';
+        this.autoSortBtn.disabled = false;
+        this.currentTurn = this.playerIndex;
+        setTimeout(() => this.takeTurn(), 600);
     }
 
-    updateVideoGrid() {
-        this.videoGrid.innerHTML = '';
-        
-        if (this.videoFiles.length === 0) {
-            this.videoGrid.innerHTML = `
-                <div class="empty-state">
-                    <div class="empty-icon">🎬</div>
-                    <p>このフォルダには動画ファイルがありません</p>
-                </div>
-            `;
-            return;
-        }
-
-        this.videoFiles.forEach((media, index) => {
-            const mediaItem = this.createMediaItem(media, index);
-            this.videoGrid.appendChild(mediaItem);
+    resetRoundState() {
+        this.wall = [];
+        this.hands = [[], [], [], []];
+        this.discards = [[], [], [], []];
+        this.currentTurn = this.playerIndex;
+        this.state = 'idle';
+        this.highlightTileId = null;
+        this.winnerIndex = null;
+        this.logEntries = [];
+        this.scores = [25000, 25000, 25000, 25000];
+        this.scoreCards.forEach(card => {
+            card.classList.remove('winner');
+            card.classList.remove('active');
         });
     }
 
-    /**
-     * メディア（動画/画像）アイテムの要素を作成
-     */
-    createMediaItem(media, index) {
-        const item = document.createElement('div');
-        item.className = 'video-item';
-        item.draggable = true;
-        // 単一ビューの切替用にフォーカス可能にする
-        item.tabIndex = 0;
-        // 最後に選択したインデックスを記録
-        item.addEventListener('focus', () => { this.lastIndex = index; });
-        item.dataset.mediaIndex = index;
-        item.dataset.mediaPath = media.path;
-        // 矢印キーで隣接アイテムにフォーカス移動
-        item.addEventListener('keydown', (e) => {
-            const key = e.key;
-            if (!key.startsWith('Arrow')) return;
-            e.preventDefault();
-            const idx = index;
-            // グリッドの列数を算出
-            const gridWidth = this.videoGrid.clientWidth;
-            const cellWidth = item.clientWidth;
-            const cols = Math.max(Math.floor(gridWidth / cellWidth), 1);
-            let targetIdx = null;
-            if (key === 'ArrowRight') targetIdx = idx + 1;
-            else if (key === 'ArrowLeft') targetIdx = idx - 1;
-            else if (key === 'ArrowDown') targetIdx = idx + cols;
-            else if (key === 'ArrowUp') targetIdx = idx - cols;
-            if (targetIdx !== null && targetIdx >= 0 && targetIdx < this.displayedFiles.length) {
-                const nextItem = this.videoGrid.querySelector(`.video-item[data-media-index=\"${targetIdx}\"]`);
-                if (nextItem) {
-                    nextItem.focus();
-                    // フォーカス移動後にプレビューを更新
-                    this.showPreview(this.displayedFiles[targetIdx]);
+    buildWall() {
+        let id = 0;
+        const wall = [];
+        const suits = ['m', 'p', 's'];
+        for (const suit of suits) {
+            for (let value = 1; value <= 9; value++) {
+                for (let i = 0; i < 4; i++) {
+                    wall.push({ id: id++, code: `${value}${suit}` });
                 }
             }
-        });
-
-        let mediaElement;
-        const ext = path.extname(media.name).toLowerCase();
-        if (media.type === 'video') {
-            mediaElement = document.createElement('video');
-            mediaElement.src = `file://${media.path}`;
-            mediaElement.loop = true;
-            mediaElement.muted = true;
-            mediaElement.autoplay = true;
-            mediaElement.controls = false;
-            mediaElement.addEventListener('loadeddata', () => {
-                mediaElement.play().catch(err => {
-                    console.warn('自動再生エラー:', err);
-                });
-            });
-        } else {
-            if (ext === '.psd') {
-                // PSDプレビューは重い/不安定なため汎用アイコンを表示
-                mediaElement = document.createElement('img');
-                mediaElement.alt = media.name;
-                mediaElement.src = 'public/icon.png';
-            } else if (ext === '.webp') {
-                // WebPは背景プレースホルダー＋IntersectionObserverで遅延ロード
-                // コンテナ(item)にdata属性とクラスを設定
-                item.dataset.src = `file://${media.path}`;
-                item.dataset.name = media.name;
-                item.classList.add('lazy-webp');
-                // 観測開始
-                this.webpObserver.observe(item);
-                // ここではmediaElementを生成せずplaceholderのみ
-                mediaElement = null;
-            } else {
-                mediaElement = document.createElement('img');
-                mediaElement.src = `file://${media.path}`;
-                mediaElement.alt = media.name;
+        }
+        for (let value = 1; value <= 7; value++) {
+            for (let i = 0; i < 4; i++) {
+                wall.push({ id: id++, code: `${value}z` });
             }
         }
-        // サムネイル表示サイズ適用
-        const sizeMap = { small: 128, standard: 256, large: 512 };
-        const dim = sizeMap[this.currentThumbSize] || 256;
-        // サムネイル要素が存在する場合のみサイズを適用
-        if (mediaElement) {
-            mediaElement.style.width = `${dim}px`;
-            mediaElement.style.height = `${dim}px`;
-        }
-        // コンテナ(item)のベースサイズを固定
-        item.style.width = `${dim}px`;
-        item.style.height = `${dim}px`;
-        // WebP以外の場合のみメディア要素を追加
-        // WebPは既存webpObserverで遅延ロード; 他はmediaObserverで遅延ロード
-        if (mediaElement) {
-            // すべてのメディア要素を常に追加し表示する
-            item.appendChild(mediaElement);
-            mediaElement.addEventListener('dblclick', (e) => { e.preventDefault(); e.stopPropagation(); this.toggleSingleView(index); });
-            mediaElement.tabIndex = 0;
-            mediaElement.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); this.toggleSingleView(index); } });
-        }
-        // アイテムでのダブルクリックとEnterキーで単一ビュー切替
-        item.addEventListener('dblclick', () => this.toggleSingleView(index));
-        item.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); this.toggleSingleView(index); } });
-        // 先読み・破棄Observerに登録
-        this.mediaObserver.observe(item);
-        // ドラッグイベント
-        item.addEventListener('dragstart', (e) => {
-            this.handleVideoItemDragStart(e, media);
-        });
-        item.addEventListener('dragend', (e) => this.handleVideoItemDragEnd(e));
-        // クリックでプレビュー表示
-        item.addEventListener('click', () => {
-            item.focus();
-            this.showPreview(media);
-        });
-        return item;
-    }
-    /**
-     * 選択された sort/order に従って動画・画像リストをソートし、表示を更新
-     */
-    applySortAndRender() {
-        // フィルター適用
-        let list = this.videoFiles;
-        if (this.currentFilter && this.currentFilter !== 'all') {
-            list = list.filter(m => require('path').extname(m.name).toLowerCase() === this.currentFilter);
-        }
-        // ソート・フィルター後のリストを保存
-        this.displayedFiles = list;
-        // グリッド列幅を更新
-        this.updateGridColumns();
-        switch (this.currentSort) {
-            case 'name':
-                list.sort((a, b) => a.name.localeCompare(b.name));
-                break;
-            case 'mtime':
-                list.sort((a, b) => a.mtimeMs - b.mtimeMs);
-                break;
-            case 'type':
-                list.sort((a, b) => {
-                    const extA = path.extname(a.name).toLowerCase();
-                    const extB = path.extname(b.name).toLowerCase();
-                    return extA.localeCompare(extB);
-                });
-                break;
-        }
-        if (this.currentOrder === 'desc') {
-            list.reverse();
-        }
-        // グリッド表示
-        this.videoGrid.innerHTML = '';
-        this.videoGrid.style.display = 'grid';
-        this.displayedFiles.forEach((media, index) => {
-            const mediaItem = this.createMediaItem(media, index);
-            this.videoGrid.appendChild(mediaItem);
-        });
+        this.shuffle(wall);
+        this.wall = wall;
+        this.updateWallCount();
     }
 
-    formatFileSize(bytes) {
-        if (bytes === 0) return '0 B';
-        const k = 1024;
-        const sizes = ['B', 'KB', 'MB', 'GB'];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-    }
-
-    toggleHistory() {
-        this.historyPanel.classList.toggle('hidden');
-    }
-
-    pinCurrentFolder() {
-        if (this.currentPath && !this.pathHistory.pinned.includes(this.currentPath)) {
-            this.pathHistory.pinned.push(this.currentPath);
-            this.savePathHistory();
-            this.updateHistoryDisplay();
+    shuffle(array) {
+        for (let i = array.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [array[i], array[j]] = [array[j], array[i]];
         }
     }
 
-    unpinFolder(path) {
-        this.pathHistory.pinned = this.pathHistory.pinned.filter(p => p !== path);
-        this.savePathHistory();
-        this.updateHistoryDisplay();
-    }
-
-    /**
-     * ネイティブドラッグ開始をメインプロセスに通知
-     */
-    handleVideoItemDragStart(e, video) {
-        // メインプロセスで startDrag を実行
-        ipcRenderer.send('ondragstart', video.path);
-        e.preventDefault();
-        e.target.classList.add('dragging');
-    }
-
-    handleVideoItemDragEnd(e) {
-        e.target.classList.remove('dragging');
-        // ドロップ完了時オーバーレイ非表示 (存在する場合のみ)
-        if (this.dropOverlay) this.dropOverlay.classList.add('hidden');
-    }
-
-    handleDragOver(e) {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'copy';
-        if (this.dropOverlay) this.dropOverlay.classList.remove('hidden');
-    }
-
-    handleDragLeave(e) {
-        // ウィンドウ外に出た場合のみオーバーレイを隠す
-        if (e.clientX <= 0 || e.clientY <= 0 || 
-            e.clientX >= window.innerWidth || e.clientY >= window.innerHeight) {
-            if (this.dropOverlay) this.dropOverlay.classList.add('hidden');
-        }
-    }
-
-    async handleDrop(e) {
-        e.preventDefault();
-        if (this.dropOverlay) this.dropOverlay.classList.add('hidden');
-        
-        const sourcePath = e.dataTransfer.getData('text/plain');
-        if (!sourcePath) return;
-        
-        try {
-            // コピー先フォルダを選択
-            const destinationFolder = await ipcRenderer.invoke('select-folder');
-            if (!destinationFolder) return;
-            
-            const fileName = sourcePath.split(/[\\/]/).pop();
-            const destinationPath = require('path').join(destinationFolder, fileName);
-            
-            this.showLoading(true);
-            
-            // ファイルをコピー
-            const result = await ipcRenderer.invoke('copy-file', sourcePath, destinationPath);
-            
-            if (result.success) {
-                this.showSuccess(`ファイルをコピーしました: ${fileName}`);
-            } else {
-                this.showError(`コピーに失敗しました: ${result.error}`);
+    dealHands() {
+        for (let round = 0; round < 13; round++) {
+            for (let seat = 0; seat < 4; seat++) {
+                this.hands[seat].push(this.drawTile());
             }
-            
-        } catch (error) {
-            console.error('ドロップ処理エラー:', error);
-            this.showError('ファイルのコピーに失敗しました。');
-        } finally {
-            this.showLoading(false);
         }
+        this.hands.forEach(hand => this.sortHand(hand));
     }
 
-    showLoading(show) {
-        if (show) {
-            this.loading.classList.remove('hidden');
-        } else {
-            this.loading.classList.add('hidden');
-        }
-    }
-
-    showError(message) {
-        // 簡易的なエラー表示（実際のプロダクトではより洗練されたUIを使用）
-        alert(`エラー: ${message}`);
-    }
-
-    showSuccess(message) {
-        // 簡易的な成功表示（実際のプロダクトではより洗練されたUIを使用）
-        alert(`成功: ${message}`);
-    }
-
-    /**
-     * サムネイルサイズに応じてグリッドのカラム幅を更新
-     */
-    updateGridColumns() {
-        const sizeMap = { small: 128, standard: 256, large: 512 };
-        const dim = sizeMap[this.currentThumbSize] || sizeMap.standard;
-        // カラム幅を固定ピクセルに設定
-        this.videoGrid.style.gridTemplateColumns = `repeat(auto-fill, ${dim}px)`;
-    }
-
-    /**
-     * 単一ビューのトグル切替
-     */
-    toggleSingleView(index) {
-        const media = this.videoFiles[index];
-        console.log('toggleSingleView called for', media.path, 'index', index);
-        // 常に最新の要素を取得
-        const item = this.videoGrid.querySelector(`.video-item[data-media-index="${index}"]`);
-        const el = item ? item.querySelector('video, img') : null;
-        if (!el) {
-            console.warn('toggleSingleView: media element not found for', media.path);
+    takeTurn() {
+        if (this.state === 'finished') {
             return;
         }
-        if (!this.isSingleView) {
-            this.enterSingleView(media, el);
+        if (this.wall.length === 0) {
+            this.endInDraw();
+            return;
+        }
+        this.updateTurnIndicators();
+        if (this.currentTurn === this.playerIndex) {
+            this.playerDrawPhase();
         } else {
-            this.exitSingleView();
+            this.aiTakeTurn(this.currentTurn);
         }
     }
-    /**
-     * プレビュー領域にメディアを表示
-     */
-    showPreview(media) {
-        if (!this.previewPanel) return;
-        const preview = this.previewPanel;
-        preview.innerHTML = '';
-        // メタデータ表示
-        const meta = document.createElement('div');
-        meta.className = 'preview-meta';
-        meta.innerHTML = `
-            <p><strong>ファイル名:</strong> ${media.name}</p>
-            <p><strong>サイズ:</strong> ${this.formatFileSize(media.size)}</p>
-            <p><strong>更新日時:</strong> ${new Date(media.mtimeMs).toLocaleString()}</p>
-            <p><strong>タイプ:</strong> ${media.type}</p>
-        `;
-        // メディア要素生成
-        let elem;
-        const ext = path.extname(media.name).toLowerCase();
-        if (media.type === 'video') {
-            elem = document.createElement('video');
-            elem.src = `file://${media.path}`;
-            elem.controls = true;
-            elem.autoplay = true;
-            elem.loop = true;
-            elem.muted = false;
-        } else {
-            elem = document.createElement('img');
-            elem.src = `file://${media.path}`;
-            elem.alt = media.name;
+
+    playerDrawPhase() {
+        const tile = this.drawTile();
+        if (!tile) {
+            this.endInDraw();
+            return;
         }
-        elem.style.maxWidth = '100%';
-        elem.style.maxHeight = '100%';
-        preview.appendChild(elem);
-        preview.appendChild(meta);
+        this.hands[this.playerIndex].push(tile);
+        this.highlightTileId = tile.id;
+        this.sortHand(this.hands[this.playerIndex]);
+        this.updateAllUI();
+        this.state = 'awaiting-discard';
+        const canWin = this.canWin(this.hands[this.playerIndex]);
+        if (canWin) {
+            this.tsumoBtn.classList.remove('hidden');
+            this.setStatusMessage('和了形が揃いました！「ツモ」で和了しましょう。');
+        } else {
+            this.tsumoBtn.classList.add('hidden');
+            this.setStatusMessage('捨てたい牌をクリックして打牌してください。');
+        }
+        this.enablePlayerInteractions();
     }
-    enterSingleView(media, mediaElement) {
-        this.isSingleView = true;
-        // 一覧表示を隠す(styleで非表示)
-        this.header.style.display = 'none';
-        this.bodyWrapper.style.display = 'none';
-        // 単一ビューコンテナを生成
-        this.singleViewContainer = document.createElement('div');
-        this.singleViewContainer.className = 'single-view-container';
-        // メディア要素をクローンして全画面表示
-        const clone = mediaElement.cloneNode(true);
-        // ネイティブダブルクリック全画面化抑制
-        if (clone.tagName === 'VIDEO') {
-            clone.controlsList = 'nofullscreen';
-            clone.requestFullscreen = () => {};
-            if (clone.webkitRequestFullscreen) clone.webkitRequestFullscreen = () => {};
-        }
-        // コンテンツ解像度に合わせるためスタイルは後で設定
-        if (clone.tagName === 'VIDEO') {
-            clone.controls = true;
-            clone.autoplay = true;
-            clone.loop = true;
-            setTimeout(() => clone.play().catch(() => {}), 0);
-            clone.addEventListener('loadedmetadata', () => {
-                const w = clone.videoWidth;
-                const h = clone.videoHeight;
-                // リストビュー時のコンテンツサイズを取得して保持
-                ipcRenderer.invoke('get-content-size').then(([cw, ch]) => {
-                    this._savedContentSize = { width: cw, height: ch };
-                    // メディア解像度に合わせてウィンドウリサイズ
-                    ipcRenderer.invoke('resize-window', w, h);
-                });
-            });
-        } else {
-            clone.addEventListener('load', () => {
-                const w = clone.naturalWidth;
-                const h = clone.naturalHeight;
-                // リストビュー時のコンテンツサイズを取得して保持
-                ipcRenderer.invoke('get-content-size').then(([cw, ch]) => {
-                    this._savedContentSize = { width: cw, height: ch };
-                    ipcRenderer.invoke('resize-window', w, h);
-                });
-            });
-        }
-        this.singleViewContainer.appendChild(clone);
-        document.body.appendChild(this.singleViewContainer);
-        // ウィンドウリサイズ時にコンテンツをcontainerサイズに合わせる
-        this._resizeHandler = () => {
-            if (this.singleViewContainer) {
-                const mediaEl = this.singleViewContainer.querySelector('video, img');
-                if (mediaEl) {
-                    const { width, height } = this.singleViewContainer.getBoundingClientRect();
-                    mediaEl.style.width = `${width}px`;
-                    mediaEl.style.height = `${height}px`;
-                }
-            }
-        };
-        window.addEventListener('resize', this._resizeHandler);
-        // コンテナでのダブルクリックでリストビューに戻る
-        this.singleViewContainer.addEventListener('dblclick', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            this.exitSingleView();
+
+    enablePlayerInteractions() {
+        const container = this.handContainers[this.playerIndex];
+        container.querySelectorAll('.tile.clickable').forEach(tileEl => {
+            tileEl.addEventListener('click', () => {
+                const tileId = Number(tileEl.dataset.tileId);
+                this.handlePlayerDiscard(tileId);
+            }, { once: true });
         });
-        // Enterキーで一覧ビューに戻る
-        this._singleViewKeyHandler = (e) => {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                this.exitSingleView();
-            }
-        };
-        document.addEventListener('keydown', this._singleViewKeyHandler);
     }
-    exitSingleView() {
-        this.isSingleView = false;
-        // 直接ファイル起動時は解除後に一覧ビュー表示
-        if (this._openFileFolder) {
-            this.loadFolder(this._openFileFolder);
-            this._openFileFolder = null;
+
+    handlePlayerDiscard(tileId) {
+        if (this.state !== 'awaiting-discard') {
+            return;
         }
-        // リストビュー時のWindowサイズを復帰
-        if (this._openedDirectView) {
-            // 直接起動時はデフォルトサイズに戻す
-            if (this._defaultContentSize) {
-                ipcRenderer.invoke('resize-window', this._defaultContentSize.width, this._defaultContentSize.height);
+        const hand = this.hands[this.playerIndex];
+        const index = hand.findIndex(tile => tile.id === tileId);
+        if (index === -1) {
+            return;
+        }
+        const [discard] = hand.splice(index, 1);
+        this.discards[this.playerIndex].push(discard);
+        this.highlightTileId = null;
+        this.updateAllUI();
+        this.addLog(`${this.players[this.playerIndex].name}は${this.tileName(discard.code)}を捨てた`, this.playerIndex);
+        this.state = 'playing';
+        this.tsumoBtn.classList.add('hidden');
+        this.currentTurn = (this.currentTurn + 1) % 4;
+        setTimeout(() => this.takeTurn(), 800);
+    }
+
+    aiTakeTurn(index) {
+        if (this.state === 'finished') {
+            return;
+        }
+        const tile = this.drawTile();
+        if (!tile) {
+            this.endInDraw();
+            return;
+        }
+        this.hands[index].push(tile);
+        this.sortHand(this.hands[index]);
+        this.updateAllUI();
+        if (this.canWin(this.hands[index])) {
+            this.highlightTileId = null;
+            setTimeout(() => this.declareWin(index, 'tsumo'), 600);
+            return;
+        }
+        const discard = this.chooseAIDiscard(index);
+        this.discards[index].push(discard);
+        this.addLog(`${this.players[index].name}は${this.tileName(discard.code)}を捨てた`, index);
+        this.updateAllUI();
+        this.currentTurn = (index + 1) % 4;
+        setTimeout(() => this.takeTurn(), 900);
+    }
+
+    chooseAIDiscard(index) {
+        const hand = this.hands[index];
+        this.sortHand(hand);
+        const discard = hand.pop();
+        return discard;
+    }
+
+    declareWin(index, type) {
+        if (this.state === 'finished') {
+            return;
+        }
+        this.state = 'finished';
+        this.winnerIndex = index;
+        const playerName = this.players[index].name;
+        const message = type === 'tsumo' ? `${playerName}のツモ和了！` : `${playerName}の和了！`;
+        this.setStatusMessage(message);
+        this.addLog(message, index);
+        const gain = 6000;
+        this.scores[index] += gain;
+        const loss = Math.floor(gain / 3);
+        for (let seat = 0; seat < 4; seat++) {
+            if (seat !== index) {
+                this.scores[seat] -= loss;
             }
-            this._openedDirectView = false;
-        } else if (this._savedContentSize) {
-            // 通常の切替時は保存サイズに戻す
-            ipcRenderer.invoke('resize-window', this._savedContentSize.width, this._savedContentSize.height);
-            this._savedContentSize = null;
         }
-        // Enterキーハンドラを解除
-        if (this._singleViewKeyHandler) {
-            document.removeEventListener('keydown', this._singleViewKeyHandler);
-            this._singleViewKeyHandler = null;
+        this.updateAllUI();
+        this.finishRound();
+    }
+
+    endInDraw() {
+        if (this.state === 'finished') {
+            return;
         }
-        // 一覧表示を戻す(styleで再表示)
-        this.header.style.display = '';
-        this.bodyWrapper.style.display = '';
-        // リサイズハンドラ解除
-        if (this._resizeHandler) {
-            window.removeEventListener('resize', this._resizeHandler);
-            this._resizeHandler = null;
+        this.state = 'finished';
+        this.setStatusMessage('流局しました。もう一度挑戦してみましょう。');
+        this.addLog('流局 - 残り山が尽きました', null);
+        this.finishRound();
+    }
+
+    finishRound() {
+        this.startBtn.disabled = false;
+        this.startBtn.textContent = '再戦する';
+        this.autoSortBtn.disabled = true;
+        this.tsumoBtn.classList.add('hidden');
+        this.highlightTileId = null;
+        this.updateTurnIndicators();
+        if (this.winnerIndex !== null) {
+            this.scoreCards[this.winnerIndex].classList.add('winner');
         }
-        // 単一ビューコンテナを削除
-        if (this.singleViewContainer) {
-            document.body.removeChild(this.singleViewContainer);
-            this.singleViewContainer = null;
+    }
+
+    drawTile() {
+        const tile = this.wall.pop();
+        this.updateWallCount();
+        return tile;
+    }
+
+    sortAndRenderPlayerHand() {
+        if (this.hands[this.playerIndex].length === 0) {
+            return;
         }
+        this.sortHand(this.hands[this.playerIndex]);
+        this.updateHands();
+    }
+
+    sortHand(hand) {
+        hand.sort((a, b) => this.tileSortValue(a.code) - this.tileSortValue(b.code));
+    }
+
+    tileSortValue(code) {
+        const suit = code.slice(-1);
+        const value = parseInt(code.slice(0, -1), 10);
+        const suitOrder = { m: 0, p: 1, s: 2, z: 3 };
+        return suitOrder[suit] * 100 + value;
+    }
+
+    canWin(hand) {
+        if (!hand || hand.length % 3 !== 2) {
+            return false;
+        }
+        const tiles = hand.map(tile => tile.code);
+        const counts = this.createTileCounts(tiles);
+        for (const tile of Object.keys(counts)) {
+            if (counts[tile] >= 2) {
+                counts[tile] -= 2;
+                if (this.canFormSets(counts)) {
+                    counts[tile] += 2;
+                    return true;
+                }
+                counts[tile] += 2;
+            }
+        }
+        return false;
+    }
+
+    createTileCounts(tiles) {
+        const counts = {};
+        tiles.forEach(code => {
+            counts[code] = (counts[code] || 0) + 1;
+        });
+        return counts;
+    }
+
+    canFormSets(counts) {
+        const remainingTiles = Object.entries(counts).filter(([, count]) => count > 0);
+        if (remainingTiles.length === 0) {
+            return true;
+        }
+        const [tile, count] = remainingTiles[0];
+        if (count >= 3) {
+            counts[tile] -= 3;
+            if (this.canFormSets(counts)) {
+                counts[tile] += 3;
+                return true;
+            }
+            counts[tile] += 3;
+        }
+        const suit = tile.slice(-1);
+        if (suit !== 'z') {
+            const value = parseInt(tile.slice(0, -1), 10);
+            const n1 = `${value + 1}${suit}`;
+            const n2 = `${value + 2}${suit}`;
+            if (counts[n1] > 0 && counts[n2] > 0) {
+                counts[tile]--;
+                counts[n1]--;
+                counts[n2]--;
+                if (this.canFormSets(counts)) {
+                    counts[tile]++;
+                    counts[n1]++;
+                    counts[n2]++;
+                    return true;
+                }
+                counts[tile]++;
+                counts[n1]++;
+                counts[n2]++;
+            }
+        }
+        return false;
+    }
+
+    tileName(code) {
+        const suit = code.slice(-1);
+        const value = parseInt(code.slice(0, -1), 10);
+        if (suit === 'm') {
+            return `${this.numberKanji[value]}萬`;
+        }
+        if (suit === 'p') {
+            return `${this.fullWidthNumbers[value]}筒`;
+        }
+        if (suit === 's') {
+            return `${this.numberKanji[value]}索`;
+        }
+        return this.honorNames[value];
+    }
+
+    createTileElement(tile, { hidden = false, clickable = false, size = 'normal', highlight = false } = {}) {
+        const element = document.createElement('div');
+        element.classList.add('tile');
+        if (clickable) {
+            element.classList.add('clickable');
+        }
+        if (size === 'small') {
+            element.classList.add('tile-small');
+        }
+        if (hidden) {
+            element.classList.add('tile-back');
+            return element;
+        }
+        const code = tile.code;
+        const suit = code.slice(-1);
+        const value = parseInt(code.slice(0, -1), 10);
+        let rankText = '';
+        let className = '';
+        let suitText = '';
+        if (suit === 'm') {
+            rankText = this.numberKanji[value];
+            suitText = '萬';
+            className = 'tile-man';
+        } else if (suit === 'p') {
+            rankText = this.fullWidthNumbers[value];
+            suitText = '筒';
+            className = 'tile-pin';
+        } else if (suit === 's') {
+            rankText = this.numberKanji[value];
+            suitText = '索';
+            className = 'tile-sou';
+        } else {
+            rankText = this.honorNames[value];
+            className = 'tile-honor';
+        }
+        element.classList.add(className);
+        const rank = document.createElement('span');
+        rank.className = 'rank';
+        rank.textContent = rankText;
+        element.appendChild(rank);
+        if (suit !== 'z') {
+            const suitLabel = document.createElement('span');
+            suitLabel.className = 'suit-label';
+            suitLabel.textContent = suitText;
+            element.appendChild(suitLabel);
+        }
+        if (clickable) {
+            element.dataset.tileId = String(tile.id);
+        }
+        if (highlight) {
+            element.classList.add('tile-drawn');
+        }
+        return element;
+    }
+
+    updateAllUI() {
+        this.updateWallCount();
+        this.updateRoundInfo();
+        this.updateScoreboard();
+        this.updateHands();
+        this.updateDiscards();
+        this.updateLog();
+        this.updateTurnIndicators();
+    }
+
+    updateHands() {
+        this.hands.forEach((hand, index) => {
+            const container = this.handContainers[index];
+            container.innerHTML = '';
+            if (index === this.playerIndex) {
+                hand.forEach(tile => {
+                    const highlight = tile.id === this.highlightTileId;
+                    const tileEl = this.createTileElement(tile, { clickable: true, highlight });
+                    container.appendChild(tileEl);
+                });
+            } else {
+                hand.forEach(() => {
+                    const tileEl = this.createTileElement({ code: '0m', id: 0 }, { hidden: true });
+                    container.appendChild(tileEl);
+                });
+            }
+        });
+    }
+
+    updateDiscards() {
+        this.discards.forEach((river, index) => {
+            const container = this.discardContainers[index];
+            container.innerHTML = '';
+            river.forEach(tile => {
+                const tileEl = this.createTileElement(tile, { size: 'small' });
+                container.appendChild(tileEl);
+            });
+        });
+    }
+
+    updateScoreboard() {
+        this.scores.forEach((score, index) => {
+            this.scoreEls[index].textContent = score.toString();
+        });
+    }
+
+    updateRoundInfo() {
+        this.roundInfoEl.textContent = `${this.roundWind}一局 ・ ${this.honba}本場`;
+    }
+
+    updateWallCount() {
+        this.wallCountEl.textContent = this.wall.length.toString().padStart(2, '0');
+    }
+
+    updateTurnIndicators() {
+        this.scoreCards.forEach((card, idx) => {
+            card.classList.toggle('active', this.state !== 'finished' && this.currentTurn === idx);
+        });
+        this.seatStates.forEach((label, idx) => {
+            if (!label) return;
+            if (this.state === 'finished') {
+                label.textContent = idx === this.winnerIndex ? '和了' : '';
+            } else if (this.currentTurn === idx) {
+                label.textContent = idx === this.playerIndex ? '打牌中' : '思考中…';
+            } else {
+                label.textContent = '';
+            }
+        });
+    }
+
+    updateLog() {
+        this.logList.innerHTML = '';
+        this.logEntries.slice(-20).forEach(entry => {
+            const li = document.createElement('li');
+            li.textContent = entry.message;
+            if (typeof entry.seat === 'number') {
+                li.classList.add('highlight');
+            }
+            this.logList.appendChild(li);
+        });
+        this.logList.scrollTop = this.logList.scrollHeight;
+    }
+
+    addLog(message, seat) {
+        this.logEntries.push({ message, seat, timestamp: Date.now() });
+        this.updateLog();
+    }
+
+    setStatusMessage(message) {
+        this.statusMessageEl.textContent = message;
     }
 }
 
-// アプリケーション初期化
 document.addEventListener('DOMContentLoaded', () => {
-    new VideoViewer();
+    new MahjongGame();
 });
