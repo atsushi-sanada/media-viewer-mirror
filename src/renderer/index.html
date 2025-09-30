@@ -3,98 +3,130 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Media Viewer - メディアビューワー</title>
+    <title>雀魂スタイル麻雀</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div id="app">
-        <!-- ヘッダー -->
-        <header class="header">
-            <h1>Media Viewer</h1>
-            <div class="controls">
-                <button id="select-folder-btn" class="btn btn-primary">フォルダを選択</button>
-                <button id="toggle-history-btn" class="btn btn-secondary">履歴</button>
-                <select id="sort-select" class="btn btn-secondary">
-                    <option value="name">名前</option>
-                    <option value="mtime">更新時間</option>
-                    <option value="type">種類</option>
-                </select>
-                <select id="order-select" class="btn btn-secondary">
-                    <option value="asc">昇順</option>
-                    <option value="desc">降順</option>
-                </select>
-                <select id="filter-select" class="btn btn-secondary">
-                    <option value="all">すべて</option>
-                    <option value=".mp4">.mp4</option>
-                    <option value=".webm">.webm</option>
-                    <option value=".mov">.mov</option>
-                    <option value=".avi">.avi</option>
-                    <option value=".mkv">.mkv</option>
-                    <option value=".wmv">.wmv</option>
-                    <option value=".mp3">.mp3</option>
-                    <option value=".png">.png</option>
-                    <option value=".jpg">.jpg</option>
-                    <option value=".jpeg">.jpeg</option>
-                    <option value=".gif">.gif</option>
-                    <option value=".bmp">.bmp</option>
-                    <option value=".tiff">.tiff</option>
-                    <option value=".webp">.webp</option>
-                    <option value=".psd">.psd</option>
-                </select>
-                <select id="thumb-size-select" class="btn btn-secondary">
-                    <option value="small">小さい</option>
-                    <option value="standard">標準</option>
-                    <option value="large">大きい</option>
-                </select>
+    <div class="app">
+        <header class="game-header">
+            <div class="title-block">
+                <h1>雀魂スタイル麻雀</h1>
+                <p class="subtitle">オフラインで遊べる Mahjong Soul 風の東風戦デモ</p>
+            </div>
+            <div class="control-buttons">
+                <button id="start-btn" class="btn primary">東風戦開始</button>
+                <button id="auto-sort-btn" class="btn secondary" disabled>手牌を整列</button>
             </div>
         </header>
 
-        <!-- プレビュー付きレイアウト -->
-        <div class="body-wrapper">
-            <!-- プレビューエリア -->
-            <div id="preview-panel" class="preview-panel">
-                <p>サムネイルをクリックするとプレビューされます</p>
+        <section class="scoreboard" aria-label="得点ボード">
+            <div class="score-card" data-seat="0">
+                <span class="seat">東</span>
+                <span class="name">あなた</span>
+                <span class="points" id="score-0">25000</span>
             </div>
-            <!-- メインコンテンツエリア -->
-            <div class="content-area">
-        <!-- パス履歴パネル -->
-        <div id="history-panel" class="history-panel hidden">
-            <div class="history-section">
-                <h3>ピン留めフォルダ</h3>
-                <div id="pinned-folders" class="folder-list"></div>
+            <div class="score-card" data-seat="1">
+                <span class="seat">南</span>
+                <span class="name">夕凪AI</span>
+                <span class="points" id="score-1">25000</span>
             </div>
-            <div class="history-section">
-                <h3>最近使用したフォルダ</h3>
-                <div id="recent-folders" class="folder-list"></div>
+            <div class="score-card" data-seat="2">
+                <span class="seat">西</span>
+                <span class="name">黎明AI</span>
+                <span class="points" id="score-2">25000</span>
             </div>
-        </div>
+            <div class="score-card" data-seat="3">
+                <span class="seat">北</span>
+                <span class="name">宵星AI</span>
+                <span class="points" id="score-3">25000</span>
+            </div>
+        </section>
 
-        <!-- 現在のフォルダパス表示 -->
-        <div id="current-path" class="current-path">
-            <span>フォルダが選択されていません</span>
-            <button id="pin-current-btn" class="btn btn-small hidden">ピン留め</button>
-        </div>
+        <main class="table-area">
+            <div class="table-surface">
+                <div class="center-info">
+                    <div id="round-info" class="round-chip">東一局 ・ 0本場</div>
+                    <div class="wall-chip">残り山: <span id="wall-count">136</span> 枚</div>
+                    <p id="status-message" class="status-text">「東風戦開始」を押して対局を始めましょう</p>
+                </div>
 
-        <!-- 動画グリッド -->
-        <main class="main-content">
-            <div id="video-grid" class="video-grid">
-                <div class="empty-state">
-                    <div class="empty-icon">📁</div>
-                    <p>フォルダを選択して動画を表示してください</p>
+                <div class="player-area top" data-seat="2">
+                    <div class="player-info">
+                        <span class="wind-tag">西</span>
+                        <span class="player-name">黎明AI</span>
+                        <span class="player-state" id="state-2"></span>
+                    </div>
+                    <div class="hand-row" id="hand-2" aria-label="西家の手牌"></div>
+                </div>
+
+                <div class="player-area left" data-seat="3">
+                    <div class="player-info">
+                        <span class="wind-tag">北</span>
+                        <span class="player-name">宵星AI</span>
+                        <span class="player-state" id="state-3"></span>
+                    </div>
+                    <div class="hand-row vertical" id="hand-3" aria-label="北家の手牌"></div>
+                </div>
+
+                <div class="player-area right" data-seat="1">
+                    <div class="player-info">
+                        <span class="wind-tag">南</span>
+                        <span class="player-name">夕凪AI</span>
+                        <span class="player-state" id="state-1"></span>
+                    </div>
+                    <div class="hand-row vertical" id="hand-1" aria-label="南家の手牌"></div>
+                </div>
+
+                <div class="player-area bottom" data-seat="0">
+                    <div class="player-info">
+                        <span class="wind-tag highlight">東</span>
+                        <span class="player-name">あなた</span>
+                        <span class="player-state" id="state-0"></span>
+                    </div>
+                    <div class="hand-row" id="hand-0" aria-label="あなたの手牌"></div>
+                    <div class="action-row">
+                        <button id="tsumo-btn" class="btn accent hidden">ツモ</button>
+                    </div>
                 </div>
             </div>
         </main>
 
-        <!-- ローディング表示 -->
-        <div id="loading" class="loading hidden">
-            <div class="spinner"></div>
-            <p>動画を読み込み中...</p>
-        </div>
-        </div> <!-- /.content-area -->
-        </div> <!-- /.body-wrapper -->
-    </div> <!-- /#app -->
+        <section class="rivers" aria-label="各家の捨て牌">
+            <div class="river-row" data-seat="0">
+                <h2>あなたの河</h2>
+                <div class="river" id="discard-0"></div>
+            </div>
+            <div class="river-row" data-seat="1">
+                <h2>夕凪AIの河</h2>
+                <div class="river" id="discard-1"></div>
+            </div>
+            <div class="river-row" data-seat="2">
+                <h2>黎明AIの河</h2>
+                <div class="river" id="discard-2"></div>
+            </div>
+            <div class="river-row" data-seat="3">
+                <h2>宵星AIの河</h2>
+                <div class="river" id="discard-3"></div>
+            </div>
+        </section>
+
+        <aside class="log-panel" aria-label="対局ログ">
+            <div class="log-header">
+                <h2>局の記録</h2>
+                <p class="log-caption">打牌や和了の履歴が表示されます</p>
+            </div>
+            <ul id="log-list" class="log-list"></ul>
+            <div class="hint-box">
+                <h3>遊び方のヒント</h3>
+                <ul>
+                    <li>あなたがツモ番のとき、捨てたい牌をクリックすると打牌できます。</li>
+                    <li>和了形が完成すると「ツモ」ボタンが点灯します。</li>
+                    <li>AIは簡易的なロジックでプレイします。気軽に雰囲気を楽しんでください。</li>
+                </ul>
+            </div>
+        </aside>
+    </div>
 
     <script src="renderer.js"></script>
 </body>
 </html>
-
